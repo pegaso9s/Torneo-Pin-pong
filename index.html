@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Torneo de Table Tennis / Ping Pong</title>
+  <title>Torneo de Ping Pong - En Vivo</title>
   <style>
     :root {
       --bg-color: #0f172a;
@@ -45,6 +45,7 @@
     .matches-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 15px; }
     .match-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
     .match-header { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; display: flex; justify-content: space-between; }
+    .round-tag { background: rgba(56, 189, 248, 0.15); color: var(--accent); padding: 2px 6px; border-radius: 4px; font-weight: bold; }
     .team-row { display: flex; justify-content: space-between; align-items: center; }
     .team-name { font-weight: 600; width: 45%; }
     .score-inputs { display: flex; gap: 6px; align-items: center; }
@@ -58,27 +59,29 @@
     .bracket-match { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 15px; }
     .bracket-title { font-size: 0.85rem; color: var(--accent); font-weight: bold; margin-bottom: 8px; }
 
-    /* Responsive */
     @media (max-width: 600px) {
       body { padding: 10px; }
       th, td { padding: 8px 4px; font-size: 0.85rem; }
     }
   </style>
+
+  <!-- Cargar Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
 <body>
 
   <header>
     <h1>🏓 TORNEO DE PING PONG 🏓</h1>
-    <p>Fase 1: Liga Todos contra Todos (66 Partidos)</p>
+    <p>Resultados y Clasificación en Tiempo Real</p>
   </header>
 
   <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('clasificacion')">🏆 Clasificación</button>
-    <button class="tab-btn" onclick="switchTab('partidos')">⚔️ Cargar Resultados</button>
-    <button class="tab-btn" onclick="switchTab('fasefinal')">🔥 Fase Final</button>
+    <button class="tab-btn active" onclick="switchTab('clasificacion', event)">🏆 Clasificación</button>
+    <button class="tab-btn" onclick="switchTab('partidos', event)">⚔️ Cargar Resultados</button>
+    <button class="tab-btn" onclick="switchTab('fasefinal', event)">🔥 Fase Final</button>
   </div>
 
-  <!-- TAB 1: CLASIFICACIÓN -->
   <div id="clasificacion" class="tab-content active">
     <div class="table-container">
       <table>
@@ -96,36 +99,37 @@
             <th>DP</th>
           </tr>
         </thead>
-        <tbody id="tabla-body">
-          <!-- Generado con JS -->
-        </tbody>
+        <tbody id="tabla-body"></tbody>
       </table>
     </div>
-    <p style="margin-top: 15px; font-size: 0.85rem; color: var(--text-muted); text-align: center;">
-      * Los primeros 8 clasifican a Cuartos de Final.<br>
-      Criterios de desempate: 1° Puntos | 2° Dif. Sets (DS) | 3° Dif. Puntos (DP)
-    </p>
   </div>
 
-  <!-- TAB 2: PARTIDOS -->
   <div id="partidos" class="tab-content">
-    <div class="matches-grid" id="lista-partidos">
-      <!-- Generado con JS -->
-    </div>
+    <div class="matches-grid" id="lista-partidos"></div>
   </div>
 
-  <!-- TAB 3: FASE FINAL -->
   <div id="fasefinal" class="tab-content">
     <div class="bracket">
       <h2 style="text-align:center; color: var(--accent); margin-bottom: 10px;">Cuartos de Final</h2>
-      <div id="cuartos-container">
-        <!-- Generado dinámicamente según la tabla -->
-      </div>
+      <div id="cuartos-container"></div>
     </div>
   </div>
 
   <script>
-    // LISTA DE JUGADORES
+    const firebaseConfig = {
+      apiKey: "AIzaSyCzZJ1X0fq9F_1Daveejq_vWa6kvcHGosU",
+      authDomain: "torneo-pin-pong.firebaseapp.com",
+      databaseURL: "https://torneo-pin-pong-default-rtdb.firebaseio.com",
+      projectId: "torneo-pin-pong",
+      storageBucket: "torneo-pin-pong.firebasestorage.app",
+      messagingSenderId: "3677906782",
+      appId: "1:3677906782:web:e71cbbcdb8406516cc91cf",
+      measurementId: "G-Z9XNHGPEWR"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
     const jugadoresNombres = [
       "TC Albarracín", "TC Shadow", "TE Torres", "T2 Rock", 
       "T2 Parra", "T2 Urueña", "ST Díaz", "ST Castro", 
@@ -134,30 +138,37 @@
 
     let partidos = [];
 
-    // Inicializar o Cargar de LocalStorage
-    function init() {
-      const localData = localStorage.getItem('pingpong_partidos');
-      if (localData) {
-        partidos = JSON.parse(localData);
+    // Escuchar cambios en vivo desde Firebase
+    db.ref('partidos').on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (data && Array.isArray(data) && data.length > 0) {
+        partidos = data;
       } else {
-        generarCalendario();
-        guardarEnStorage();
+        generarCalendarioVariado();
       }
       renderizarTabla();
       renderizarPartidos();
       renderizarFaseFinal();
-    }
+    });
 
-    // Generar 66 Partidos (Todos contra todos)
-    function generarCalendario() {
-      partidos = [];
+    // Algoritmo Round-Robin para generar 11 rondas variadas con todos jugando
+    function generarCalendarioVariado() {
+      let iniciales = [];
+      let pool = [...jugadoresNombres];
+      let numJugadores = pool.length; // 12
+      let rondas = numJugadores - 1;   // 11 rondas
       let id = 1;
-      for (let i = 0; i < jugadoresNombres.length; i++) {
-        for (let j = i + 1; j < jugadoresNombres.length; j++) {
-          partidos.push({
+
+      for (let r = 0; r < rondas; r++) {
+        for (let i = 0; i < numJugadores / 2; i++) {
+          let p1 = pool[i];
+          let p2 = pool[numJugadores - 1 - i];
+          
+          iniciales.push({
             id: id++,
-            j1: jugadoresNombres[i],
-            j2: jugadoresNombres[j],
+            ronda: r + 1,
+            j1: p1,
+            j2: p2,
             sets1: null,
             sets2: null,
             pts1: null,
@@ -165,25 +176,21 @@
             jugado: false
           });
         }
+
+        // Rotar array manteniendo el primer jugador fijo
+        pool.splice(1, 0, pool.pop());
       }
+
+      db.ref('partidos').set(iniciales);
     }
 
-    function guardarEnStorage() {
-      localStorage.setItem('pingpong_partidos', JSON.stringify(partidos));
-    }
-
-    function switchTab(tabId) {
+    function switchTab(tabId, evt) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-      
       document.getElementById(tabId).classList.add('active');
-      event.currentTarget.classList.add('active');
-
-      if(tabId === 'clasificacion') renderizarTabla();
-      if(tabId === 'fasefinal') renderizarFaseFinal();
+      evt.currentTarget.classList.add('active');
     }
 
-    // Calcular Estadísticas y Renderizar Tabla
     function renderizarTabla() {
       let stats = {};
       jugadoresNombres.forEach(nombre => {
@@ -191,54 +198,31 @@
       });
 
       partidos.forEach(p => {
-        if (p.jugado) {
-          // Jugador 1
-          stats[p.j1].pj++;
-          stats[p.j1].sf += p.sets1;
-          stats[p.j1].sc += p.sets2;
-          stats[p.j1].pf += p.pts1;
-          stats[p.j1].pc += p.pts2;
-
-          // Jugador 2
-          stats[p.j2].pj++;
-          stats[p.j2].sf += p.sets2;
-          stats[p.j2].sc += p.sets1;
-          stats[p.j2].pf += p.pts2;
-          stats[p.j2].pc += p.pts1;
+        if (p && p.jugado) {
+          stats[p.j1].pj++; stats[p.j1].sf += p.sets1; stats[p.j1].sc += p.sets2; stats[p.j1].pf += p.pts1; stats[p.j1].pc += p.pts2;
+          stats[p.j2].pj++; stats[p.j2].sf += p.sets2; stats[p.j2].sc += p.sets1; stats[p.j2].pf += p.pts2; stats[p.j2].pc += p.pts1;
 
           if (p.sets1 > p.sets2) {
-            stats[p.j1].pg++;
-            stats[p.j1].pts += 3;
-            stats[p.j2].pp++;
+            stats[p.j1].pg++; stats[p.j1].pts += 3; stats[p.j2].pp++;
           } else {
-            stats[p.j2].pg++;
-            stats[p.j2].pts += 3;
-            stats[p.j1].pp++;
+            stats[p.j2].pg++; stats[p.j2].pts += 3; stats[p.j1].pp++;
           }
         }
       });
 
-      // Calcular diferencias
       let tabla = Object.values(stats).map(s => {
         s.ds = s.sf - s.sc;
         s.dp = s.pf - s.pc;
         return s;
       });
 
-      // Ordenar: 1. Puntos, 2. Diferencia de Sets, 3. Diferencia de Puntos
-      tabla.sort((a, b) => {
-        if (b.pts !== a.pts) return b.pts - a.pts;
-        if (b.ds !== a.ds) return b.ds - a.ds;
-        return b.dp - a.dp;
-      });
+      tabla.sort((a, b) => (b.pts !== a.pts) ? b.pts - a.pts : (b.ds !== a.ds) ? b.ds - a.ds : b.dp - a.dp);
 
       const tbody = document.getElementById('tabla-body');
       tbody.innerHTML = '';
-
       tabla.forEach((j, index) => {
         const tr = document.createElement('tr');
         if (index < 8) tr.classList.add('qualified');
-        
         tr.innerHTML = `
           <td class="pos">${index + 1}°</td>
           <td class="player-name">${j.nombre}</td>
@@ -254,80 +238,67 @@
         tbody.appendChild(tr);
       });
 
-      window.tablaActual = tabla; // Guardar referencia para Cuartos
+      window.tablaActual = tabla;
     }
 
-    // Renderizar Cards de partidos para cargar resultados
     function renderizarPartidos() {
       const container = document.getElementById('lista-partidos');
       container.innerHTML = '';
 
       partidos.forEach(p => {
+        if (!p) return;
         const card = document.createElement('div');
         card.className = 'match-card';
         card.innerHTML = `
           <div class="match-header">
-            <span>Partido #${p.id}</span>
+            <span>Partido #${p.id} <span class="round-tag">Ronda ${p.ronda || 1}</span></span>
             <span style="color:${p.jugado ? 'var(--win)' : 'var(--text-muted)'}">${p.jugado ? '✓ Finalizado' : 'Pendiente'}</span>
           </div>
-          
           <div class="team-row">
             <span class="team-name">${p.j1}</span>
             <div class="score-inputs">
-              <input type="number" placeholder="Sets" id="s1-${p.id}" value="${p.sets1 !== null ? p.sets1 : ''}" min="0">
-              <input type="number" placeholder="Pts" id="p1-${p.id}" value="${p.pts1 !== null ? p.pts1 : ''}" min="0">
+              <input type="number" placeholder="Sets" id="s1-${p.id}" value="${p.sets1 !== null ? p.sets1 : ''}">
+              <input type="number" placeholder="Pts" id="p1-${p.id}" value="${p.pts1 !== null ? p.pts1 : ''}">
             </div>
           </div>
-
           <div class="team-row">
             <span class="team-name">${p.j2}</span>
             <div class="score-inputs">
-              <input type="number" placeholder="Sets" id="s2-${p.id}" value="${p.sets2 !== null ? p.sets2 : ''}" min="0">
-              <input type="number" placeholder="Pts" id="p2-${p.id}" value="${p.pts2 !== null ? p.pts2 : ''}" min="0">
+              <input type="number" placeholder="Sets" id="s2-${p.id}" value="${p.sets2 !== null ? p.sets2 : ''}">
+              <input type="number" placeholder="Pts" id="p2-${p.id}" value="${p.pts2 !== null ? p.pts2 : ''}">
             </div>
           </div>
-
-          <button class="btn-save" onclick="guardarPartido(${p.id})">Guardar Resultado</button>
+          <button class="btn-save" onclick="guardarPartido(${p.id})">Guardar en Vivo</button>
         `;
         container.appendChild(card);
       });
     }
 
-    // Guardar resultado de un partido
     function guardarPartido(id) {
       const s1 = parseInt(document.getElementById(`s1-${id}`).value);
       const p1 = parseInt(document.getElementById(`p1-${id}`).value);
       const s2 = parseInt(document.getElementById(`s2-${id}`).value);
       const p2 = parseInt(document.getElementById(`p2-${id}`).value);
 
-      if (isNaN(s1) || isNaN(p1) || isNaN(s2) || isNaN(p2)) {
-        alert("Por favor completa los campos de Sets y Puntos para ambos jugadores.");
+      if (isNaN(s1) || isNaN(p1) || isNaN(s2) || isNaN(p2) || s1 === s2) {
+        alert("Ingresa valores válidos y asegúrate de que haya un ganador en Sets.");
         return;
       }
 
-      if (s1 === s2) {
-        alert("En Sets debe haber un ganador (no pueden empatar en sets).");
-        return;
-      }
-
-      const matchIndex = partidos.findIndex(p => p.id === id);
+      const matchIndex = partidos.findIndex(p => p && p.id === id);
       partidos[matchIndex].sets1 = s1;
       partidos[matchIndex].pts1 = p1;
       partidos[matchIndex].sets2 = s2;
       partidos[matchIndex].pts2 = p2;
       partidos[matchIndex].jugado = true;
 
-      guardarEnStorage();
-      alert(`Partido #${id} guardado correctamente.`);
-      renderizarPartidos();
+      db.ref('partidos').set(partidos);
     }
 
-    // Dibujar los cruces de Cuartos de Final
     function renderizarFaseFinal() {
-      if (!window.tablaActual) renderizarTabla();
+      if (!window.tablaActual) return;
       const t = window.tablaActual;
       const container = document.getElementById('cuartos-container');
-      
       const cruces = [
         { c: "Llave 1", j1: t[0], j2: t[7], pos1: "1°", pos2: "8°" },
         { c: "Llave 2", j1: t[3], j2: t[4], pos1: "4°", pos2: "5°" },
@@ -341,20 +312,12 @@
         match.className = 'bracket-match';
         match.innerHTML = `
           <div class="bracket-title">${cruce.c}</div>
-          <div style="display:flex; justify-between; margin-bottom: 5px;">
-            <span><strong>${cruce.pos1}</strong> ${cruce.j1.nombre}</span>
-          </div>
-          <div style="display:flex; justify-between;">
-            <span><strong>${cruce.pos2}</strong> ${cruce.j2.nombre}</span>
-          </div>
+          <div style="margin-bottom: 5px;"><strong>${cruce.pos1}</strong> ${cruce.j1.nombre}</div>
+          <div><strong>${cruce.pos2}</strong> ${cruce.j2.nombre}</div>
         `;
         container.appendChild(match);
       });
     }
-
-    // Iniciar App
-    init();
   </script>
-  
 </body>
 </html>
